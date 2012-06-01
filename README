@@ -1,0 +1,33 @@
+cgis: a simple in-directory, local, appserver
+
+The general idea is to be something akin to XSP for C# or the simple python
+HTTP server which server applications from their respective languages. I
+wanted a drop in program to server general purpose CGI programs. The way it
+looks currently, I will only be implementing exactly what I need. This means
+no proper HTTP support (may the RFC gods never find out), and the interface
+with the application won't exactly be CGI.
+
+If you would like to see proper support for something, let me know or submit a
+patch. It's a hobby project, so eventually I will actually follow the RFCs for
+various things. Hence, let me know what you want so it can be bumped up the
+list.
+
+Building:
+	Currently, you'll want to edit src/cgis.c to change some constants like
+	port and application binary name.
+
+	Then simply run:
+		make
+
+	Since the program is in the initial stages of development, this creates a
+	debug enabled build. You can look through the Makefile (it's really not
+	that long) to see what you should define to make a release/other build.
+
+Running:
+	./cgis # note, you may want to copy this to ~/bin, or your application
+		# directory. I do not recommend really installing it at this time
+
+Bugs/questions/problems:
+	Please address all inquiries towards:
+		Jeff Chapman <jac@JAChapmanII.net>
+
