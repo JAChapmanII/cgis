@@ -34,11 +34,12 @@ void sigintHandler(int signal) { // {{{
 	_exit(0);
 } // }}}
 
+void cleanPath(char *path);
 char *mimeType(const char *path);
 void dumpHeader(FILE *file, int status, const char *title);
 void errorPage(FILE *file, int status, const char *title, const char *text);
 int serveStatic(FILE *file, const char *path, struct stat sb);
-void handleRequest(int outFD, char *path);
+void handleRequest(int outFD, char *path, char *queryString);
 
 int main(int argc, char **argv) {
 	signal(SIGINT, sigintHandler);
@@ -96,20 +97,34 @@ int main(int argc, char **argv) {
 		char method[BUFFER_SIZE] = { 0 }, path[BUFFER_SIZE] = { 0 },
 			protocol[BUFFER_SIZE] = { 0 };
 		// parse main request line
+		// NOTE: we use path + 1 so we can easily prepend a period
 		if(sscanf(buffer, "%[^ ] %[^ ] %[^ ]", method, path + 1, protocol) != 3) {
 			errorPage(out, 400, "Bad Request", "Can't parse request.");
 			// TODO: this does close fdopen'd FILE *s, right?
 			close(clientFD);
 			continue;
 		}
+
+		// prepend the string with a period for local dir
 		path[0] = '.';
+		// figure out if there is a query string and where it is
+		char *queryString = strchrnul(path, '?');
+		// if there is one, separate it from the url
+		if(*queryString) {
+			*(queryString++) = '\0';
+		}
+		// strip out bad things like path/../file
+		cleanPath(path);
+
 		printf("Request for: %s\n", path);
+		printf("Query string: %s\n", queryString);
+
 
 		struct stat sb;
 		bool statable = (stat(path, &sb) == 0);
 
 		// if the request isn't for the binary and is a valid file
-		if(strcmp(path, BINARY) && strcmp(path, "./") &&
+		if(strcmp(path, BINARY) && strcmp(path, ".") &&
 				statable && sb.st_mtime && !access(path, R_OK)) {
 			// skip other headers
 			while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
@@ -124,7 +139,7 @@ int main(int argc, char **argv) {
 
 		// if there is a binary to handle other requests with, use it
 		if(hasBinary) {
-			handleRequest(clientFD, path);
+			handleRequest(clientFD, path, queryString);
 			clientFD = -1;
 		}
 	}
@@ -132,6 +147,20 @@ int main(int argc, char **argv) {
 	close(socketFD);
 	return 0;
 }
+
+void cleanPath(char *path) { // {{{
+	char buffer[BUFFER_SIZE] = { 0 };
+	char *save, *tok = strtok_r(path, "/", &save);
+	for(; tok; tok = strtok_r(NULL, "/", &save)) {
+		if(tok[0] == '.' && tok[1] == '.')
+			continue;
+		// TODO: we really should have bounds checks even with 16k for space
+		strcat(buffer, tok);
+		strcat(buffer, "/");
+	}
+	size_t len = strlen(buffer);
+	strncpy(path, buffer, len - 1);
+} // }}}
 
 char *mimeType(const char *path) { // {{{
 	char* suffix = strrchr(path, '.');
@@ -214,7 +243,7 @@ int serveStatic(FILE *file, const char *path, struct stat sb) { // {{{
 	return 0;
 } // }}}
 
-void handleRequest(int outFD, char *path) { // {{{
+void handleRequest(int outFD, char *path, char *queryString) { // {{{
 	FILE *file = fdopen(outFD, "w");
 
 	int sp_pipe[2] = { 0 };
@@ -247,7 +276,7 @@ void handleRequest(int outFD, char *path) { // {{{
 		close(sp_pipe[1]);
 
 		// setup arguments and execute binary
-		char *argv[3] = { BINARY, path, NULL };
+		char *argv[4] = { BINARY, path, queryString, NULL };
 		execv(BINARY, argv);
 
 		// we only get here in catastrophic failure
