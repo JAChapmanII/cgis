@@ -3,7 +3,7 @@ LDIR=lib
 ODIR=obj
 BDIR=.
 
-BINS=${BDIR}/cgis
+BINS=${BDIR}/cgis ${BDIR}/cgis_script
 
 LDFLAGS=
 CFLAGS=-std=c99 -D_BSD_SOURCE -D_POSIX_C_SOURCE=200112L
@@ -26,6 +26,8 @@ dirs:
 	mkdir -p ${SDIR} ${ODIR} ${BDIR}
 
 ${BDIR}/cgis: ${ODIR}/cgis.o
+	${CC}    -o $@ $^ ${LDFLAGS}
+${BDIR}/cgis_script: ${ODIR}/cgis_script.o
 	${CC}    -o $@ $^ ${LDFLAGS}
 
 ${ODIR}/%.o: ${SDIR}/%.c
