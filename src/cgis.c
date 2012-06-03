@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -17,7 +18,7 @@
 
 #define BUFFER_SIZE (1024 * 16)
 
-#define BINARY "./cgis_script"
+static char *binary = "./cgis_script";
 
 static int backLog = 8;
 static short port = 13120;
@@ -36,7 +37,7 @@ void sigintHandler(int signal) { // {{{
 
 void cleanPath(char *path);
 char *mimeType(const char *path);
-void dumpHeader(FILE *file, int status, const char *title);
+void dumpHeader(FILE *file, int status);
 void errorPage(FILE *file, int status, const char *title, const char *text);
 int serveStatic(FILE *file, const char *path, struct stat sb);
 void handleRequest(int outFD, char *path, char *queryString);
@@ -44,7 +45,10 @@ void handleRequest(int outFD, char *path, char *queryString);
 int main(int argc, char **argv) {
 	signal(SIGINT, sigintHandler);
 
-	bool hasBinary = (access(BINARY, R_OK | X_OK | F_OK) == 0);
+	if(argc > 1)
+		binary = argv[1];
+
+	bool hasBinary = (access(binary, R_OK | X_OK | F_OK) == 0);
 	// if the request isn't for the binary and is a valid file
 	if(!hasBinary)
 		fprintf(stderr, "cgis: note: binary doesn't exist/not executable\n");
@@ -97,40 +101,44 @@ int main(int argc, char **argv) {
 		char method[BUFFER_SIZE] = { 0 }, path[BUFFER_SIZE] = { 0 },
 			protocol[BUFFER_SIZE] = { 0 };
 		// parse main request line
-		// NOTE: we use path + 1 so we can easily prepend a period
-		if(sscanf(buffer, "%[^ ] %[^ ] %[^ ]", method, path + 1, protocol) != 3) {
+		if(sscanf(buffer, "%[^ ] %[^ ] %[^ ]", method, path, protocol) != 3) {
 			errorPage(out, 400, "Bad Request", "Can't parse request.");
 			// TODO: this does close fdopen'd FILE *s, right?
 			close(clientFD);
 			continue;
 		}
 
+
+		char uri[BUFFER_SIZE] = { 0 };
+		strcpy(uri + 1, path);
 		// prepend the string with a period for local dir
-		path[0] = '.';
+		uri[0] = '.';
 		// figure out if there is a query string and where it is
-		char *queryString = strchrnul(path, '?');
+		char *queryString = strchrnul(uri, '?');
 		// if there is one, separate it from the url
 		if(*queryString)
 			*(queryString++) = '\0';
 		// strip out bad things like path/../file
-		cleanPath(path);
+		cleanPath(uri);
 
-		printf("\nRequest for: %s\n", path);
-		printf("Query string: %s\n", queryString);
+		printf("\nRequest for: %s =>\n\tURI: %s\n\tQUERY_STRING: %s\n",
+				path, uri, queryString);
 
+		setenv("REQUEST_URI", path, true);
+		setenv("QUERY_STRING", queryString, true);
 
 		struct stat sb;
-		bool statable = (stat(path, &sb) == 0);
+		bool statable = (stat(uri, &sb) == 0);
 
 		// if the request isn't for the binary and is a valid file
-		if(strcmp(path, BINARY) && strcmp(path, ".") &&
-				statable && sb.st_mtime && !access(path, R_OK)) {
+		if(strcmp(uri, binary) && strcmp(uri, ".") &&
+				statable && sb.st_mtime && !access(uri, R_OK)) {
 			// skip other headers
 			while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
 				if(strcmp(buffer, "\n") == 0 || strcmp(buffer, "\r\n") == 0)
 					break;
 			}
-			if(serveStatic(out, path, sb) != 0) {
+			if(serveStatic(out, uri, sb) != 0) {
 				close(socketFD);
 				return -7;
 			}
@@ -138,7 +146,7 @@ int main(int argc, char **argv) {
 
 		// if there is a binary to handle other requests with, use it
 		if(hasBinary) {
-			handleRequest(clientFD, path, queryString);
+			handleRequest(clientFD, uri, queryString);
 			clientFD = -1;
 		}
 	}
@@ -176,18 +184,18 @@ char *mimeType(const char *path) { // {{{
 	return "text/plain; charset=utf-8";
 } // }}}
 
-void dumpHeader(FILE *file, int status, const char *title) { // {{{
+void dumpHeader(FILE *file, int status) { // {{{
 	time_t now = time(NULL);
 	char timebuf[100] = { 0 };
 	strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
 
-	fprintf(file, "%s %d %s\r\n", PROTOCOL, status, title);
+	fprintf(file, "%s %d %s\r\n", PROTOCOL, status, getenv("REQUEST_URI"));
 	fprintf(file, "Server: %s\r\n", SERVER_NAME);
 	fprintf(file, "Date: %s\r\n", timebuf);
 } // }}}
 
 void errorPage(FILE *file, int status, const char *title, const char *text) { // {{{
-	dumpHeader(file, status, title);
+	dumpHeader(file, status);
 	fprintf(file, "Content-Type: text/html\r\n");
 	fprintf(file, "Connection: close\r\n");
 	fprintf(file, "\r\n");
@@ -211,7 +219,7 @@ int serveStatic(FILE *file, const char *path, struct stat sb) { // {{{
 	char timebuf[100] = { 0 };
 	strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&sb.st_mtime));
 
-	dumpHeader(file, 200, path);
+	dumpHeader(file, 200);
 	fprintf(file, "Content-Type: %s\r\n", mimeType(path));
 	if(sb.st_size >= 0)
 		fprintf(file, "Content-Length: %ld\r\n", (int64_t)sb.st_size);
@@ -262,7 +270,7 @@ void handleRequest(int outFD, char *path, char *queryString) { // {{{
 	}
 
 	// dump header for subprocess
-	dumpHeader(file, 400, path);
+	dumpHeader(file, 400);
 
 	// if we're the child process, exec the binary
 	if(pid == 0) {
@@ -275,8 +283,8 @@ void handleRequest(int outFD, char *path, char *queryString) { // {{{
 		close(sp_pipe[1]);
 
 		// setup arguments and execute binary
-		char *argv[4] = { BINARY, path, queryString, NULL };
-		execv(BINARY, argv);
+		char *argv[4] = { binary, path, queryString, NULL };
+		execv(binary, argv);
 
 		// we only get here in catastrophic failure
 		fprintf(stderr, "handleRequest: OH MAN execv FAILED\n");
