@@ -13,8 +13,9 @@ int main(int argc, char **argv) {
 			"<p>argc: %d</p>"
 			"<p>binary: %s</p>"
 			"<p>path: %s</p>"
+			"<p>queryString: %s</p>"
 		"</body>"
-		"</html>", argc, argv[0], argv[1]);
+		"</html>", argc, argv[0], argv[1], argv[2]);
 	return 0;
 }
 
