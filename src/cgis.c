@@ -110,13 +110,12 @@ int main(int argc, char **argv) {
 		// figure out if there is a query string and where it is
 		char *queryString = strchrnul(path, '?');
 		// if there is one, separate it from the url
-		if(*queryString) {
+		if(*queryString)
 			*(queryString++) = '\0';
-		}
 		// strip out bad things like path/../file
 		cleanPath(path);
 
-		printf("Request for: %s\n", path);
+		printf("\nRequest for: %s\n", path);
 		printf("Query string: %s\n", queryString);
 
 
