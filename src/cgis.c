@@ -17,7 +17,7 @@
 
 #define BUFFER_SIZE (1024 * 16)
 
-#define BINARY "cgis_script"
+#define BINARY "./cgis_script"
 
 static int backLog = 8;
 static short port = 13120;
@@ -38,16 +38,22 @@ char *mimeType(const char *path);
 void dumpHeader(FILE *file, int status, const char *title);
 void errorPage(FILE *file, int status, const char *title, const char *text);
 int serveStatic(FILE *file, const char *path, struct stat sb);
+void handleRequest(int outFD, char *path);
 
 int main(int argc, char **argv) {
 	signal(SIGINT, sigintHandler);
+
+	bool hasBinary = (access(BINARY, R_OK | X_OK | F_OK) == 0);
+	// if the request isn't for the binary and is a valid file
+	if(!hasBinary)
+		fprintf(stderr, "cgis: note: binary doesn't exist/not executable\n");
 
 	socketFD = socket(AF_INET, SOCK_STREAM, 0);
 	if(socketFD == -1) {
 		perror("cgis: unable to create socket");
 		return -1;
 	}
-	
+
 	struct sockaddr_in sAddress;
 	memset(&sAddress, '\0', sizeof(sAddress));
 	sAddress.sin_family = AF_INET;
@@ -103,7 +109,8 @@ int main(int argc, char **argv) {
 		bool statable = (stat(path, &sb) == 0);
 
 		// if the request isn't for the binary and is a valid file
-		if(strcmp(path, BINARY) && statable && sb.st_mtime && !access(path, R_OK)) {
+		if(strcmp(path, BINARY) && strcmp(path, "./") &&
+				statable && sb.st_mtime && !access(path, R_OK)) {
 			// skip other headers
 			while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
 				if(strcmp(buffer, "\n") == 0 || strcmp(buffer, "\r\n") == 0)
@@ -115,15 +122,11 @@ int main(int argc, char **argv) {
 			}
 		}
 
-		// dump other headers
-		while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
-			if(strcmp(buffer, "\n") == 0 || strcmp(buffer, "\r\n") == 0)
-				break;
-			printf("header: %s", buffer);
+		// if there is a binary to handle other requests with, use it
+		if(hasBinary) {
+			handleRequest(clientFD, path);
+			clientFD = -1;
 		}
-
-		errorPage(out, 333, "Don't know", "don't care");
-		close(clientFD);
 	}
 
 	close(socketFD);
@@ -209,5 +212,55 @@ int serveStatic(FILE *file, const char *path, struct stat sb) { // {{{
 	fclose(sf);
 	fflush(file);
 	return 0;
+} // }}}
+
+void handleRequest(int outFD, char *path) { // {{{
+	FILE *file = fdopen(outFD, "w");
+
+	int sp_pipe[2] = { 0 };
+	if(pipe(sp_pipe) != 0) {
+		fprintf(stderr, "handleRequest: failed to create sp_pipe pipe\n");
+		errorPage(file, 500, "Internal Server Error", "Left sp_pipe failed\n");
+		return;
+	}
+
+	pid_t pid = fork();
+	if(pid == -1) {
+		close(sp_pipe[0]);
+		close(sp_pipe[1]);
+		fprintf(stderr, "handleRequest: failed to fork\n");
+		errorPage(file, 500, "Internal Server Error", "Failed to fork\n");
+		return;
+	}
+
+	// dump header for subprocess
+	dumpHeader(file, 400, path);
+
+	// if we're the child process, exec the binary
+	if(pid == 0) {
+		// copy read end of pipe onto stdin
+		dup2(sp_pipe[0], 0);
+		// copy the client socket fd onto our stdout
+		dup2(outFD, 1);
+
+		// close unused write end
+		close(sp_pipe[1]);
+
+		// setup arguments and execute binary
+		char *argv[3] = { BINARY, path, NULL };
+		execv(BINARY, argv);
+
+		// we only get here in catastrophic failure
+		fprintf(stderr, "handleRequest: OH MAN execv FAILED\n");
+		errorPage(file, 500, "Internal Server Error", "Failed to execv\n");
+		return;
+	}
+
+	// we're still in cgis, close read end of pipe
+	close(sp_pipe[0]);
+
+	// TODO: POST data?
+
+	fclose(file);
 } // }}}
 
