@@ -191,6 +191,8 @@ char *mimeType(const char *path) { // {{{
 		return "image/png";
 	if(strcmp(suffix, ".css") == 0)
 		return "text/css";
+	if(strcmp(suffix, ".js") == 0)
+		return "application/javascript";
 	return "text/plain; charset=utf-8";
 } // }}}
 
@@ -280,7 +282,7 @@ void handleRequest(int outFD, char *path, char *queryString) { // {{{
 	}
 
 	// dump header for subprocess
-	dumpHeader(file, 400);
+	dumpHeader(file, 200);
 
 	// if we're the child process, exec the binary
 	if(pid == 0) {
