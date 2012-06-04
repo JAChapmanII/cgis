@@ -35,6 +35,7 @@ void sigintHandler(int signal) { // {{{
 	_exit(0);
 } // }}}
 
+bool strpeq(char *str, char *prefix);
 void cleanPath(char *path);
 char *mimeType(const char *path);
 void dumpHeader(FILE *file, int status);
@@ -127,17 +128,22 @@ int main(int argc, char **argv) {
 		setenv("REQUEST_URI", path, true);
 		setenv("QUERY_STRING", queryString, true);
 
+		// look over other headers for interesting pieces
+		while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
+			if(strcmp(buffer, "\n") == 0 || strcmp(buffer, "\r\n") == 0)
+				break;
+			if(strpeq(buffer, "Cookie: ")) {
+				setenv("COOKIE", buffer + strlen("Cookie: "), true);
+			}
+		}
+
+
 		struct stat sb;
 		bool statable = (stat(uri, &sb) == 0);
 
 		// if the request isn't for the binary and is a valid file
 		if(strcmp(uri, binary) && strcmp(uri, ".") &&
 				statable && sb.st_mtime && !access(uri, R_OK)) {
-			// skip other headers
-			while(fgets(buffer, BUFFER_SIZE, in) == buffer) {
-				if(strcmp(buffer, "\n") == 0 || strcmp(buffer, "\r\n") == 0)
-					break;
-			}
 			if(serveStatic(out, uri, sb) != 0) {
 				close(socketFD);
 				return -7;
@@ -153,6 +159,10 @@ int main(int argc, char **argv) {
 
 	close(socketFD);
 	return 0;
+}
+
+bool strpeq(char *str, char *prefix) {
+	return (strncmp(str, prefix, strlen(prefix)) == 0);
 }
 
 void cleanPath(char *path) { // {{{
